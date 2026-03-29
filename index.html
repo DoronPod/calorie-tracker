@@ -298,6 +298,52 @@ body {
 
 .history-entry .h-date { font-size: 13px; color: var(--accent); font-weight: 600; }
 .history-entry .h-stats { font-size: 13px; color: var(--text2); margin-top: 4px; }
+
+/* Food search */
+.search-wrap { position: relative; }
+
+.search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0 0 8px 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 200;
+  display: none;
+}
+
+.search-results.show { display: block; }
+
+.search-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.search-item:active, .search-item:hover { background: rgba(255,255,255,0.05); }
+.search-item .s-name { font-size: 14px; flex: 1; }
+.search-item .s-cal { font-size: 12px; color: var(--accent); white-space: nowrap; margin-left: 8px; }
+
+.search-loading { padding: 10px 12px; color: var(--text2); font-size: 13px; text-align: center; }
+
+.cal-preview {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--text2);
+  margin-top: 8px;
+}
+
+.cal-preview strong { color: var(--accent); font-size: 18px; }
 </style>
 </head>
 <body>
@@ -423,16 +469,21 @@ body {
 <div class="modal-overlay" id="modalFood">
   <div class="modal">
     <h3>Add Food</h3>
-    <div class="form-group">
-      <label>Food name</label>
-      <input type="text" id="foodName" placeholder="e.g. Chicken breast">
+    <div class="form-group search-wrap">
+      <label>Search food</label>
+      <input type="text" id="foodName" placeholder="Type to search... e.g. chicken" autocomplete="off">
+      <div class="search-results" id="searchResults"></div>
     </div>
     <div class="form-group">
       <label>Weight (g)</label>
       <input type="number" id="foodWeight" inputmode="decimal" placeholder="e.g. 150">
     </div>
-    <div class="form-group">
-      <label>Calories (kcal)</label>
+    <div id="calPreview" class="cal-preview" style="display:none">
+      <strong id="previewCals">0</strong> kcal
+    </div>
+    <input type="hidden" id="foodCalsPer100" value="">
+    <div class="form-group" id="manualCalGroup">
+      <label>Or enter calories manually (kcal)</label>
       <input type="number" id="foodCals" inputmode="decimal" placeholder="e.g. 250">
     </div>
     <div class="modal-actions">
@@ -489,8 +540,49 @@ body {
 </div>
 
 <script>
+// ── Built-in Food Database (calories per 100g) ──
+const FOOD_DB = [
+  {name:"Chicken breast (raw)",cal:120},{name:"Chicken breast (cooked)",cal:165},{name:"Chicken thigh",cal:209},
+  {name:"Turkey breast",cal:104},{name:"Beef steak (sirloin)",cal:206},{name:"Beef mince (lean)",cal:176},
+  {name:"Beef mince (regular)",cal:254},{name:"Pork chop",cal:231},{name:"Pork tenderloin",cal:143},
+  {name:"Bacon",cal:541},{name:"Ham",cal:145},{name:"Lamb chop",cal:258},{name:"Salmon",cal:208},
+  {name:"Tuna (canned in water)",cal:116},{name:"Tuna (fresh)",cal:144},{name:"Shrimp",cal:85},
+  {name:"Cod",cal:82},{name:"Sardines",cal:208},{name:"Egg (whole)",cal:155},{name:"Egg white",cal:52},
+  {name:"Tofu",cal:76},{name:"Tempeh",cal:192},
+  {name:"White rice (cooked)",cal:130},{name:"Brown rice (cooked)",cal:123},{name:"Pasta (cooked)",cal:131},
+  {name:"Bread (white)",cal:265},{name:"Bread (whole wheat)",cal:247},{name:"Oats (dry)",cal:389},
+  {name:"Oats (cooked)",cal:71},{name:"Quinoa (cooked)",cal:120},{name:"Couscous (cooked)",cal:112},
+  {name:"Potato (boiled)",cal:87},{name:"Sweet potato",cal:86},{name:"Corn",cal:96},
+  {name:"Flour (white)",cal:364},{name:"Tortilla (flour)",cal:312},{name:"Bagel",cal:270},
+  {name:"Banana",cal:89},{name:"Apple",cal:52},{name:"Orange",cal:47},{name:"Strawberries",cal:32},
+  {name:"Blueberries",cal:57},{name:"Grapes",cal:69},{name:"Watermelon",cal:30},{name:"Mango",cal:60},
+  {name:"Pineapple",cal:50},{name:"Avocado",cal:160},{name:"Peach",cal:39},{name:"Pear",cal:57},
+  {name:"Kiwi",cal:61},{name:"Cherries",cal:63},{name:"Raspberries",cal:52},{name:"Lemon",cal:29},
+  {name:"Broccoli",cal:34},{name:"Spinach",cal:23},{name:"Carrot",cal:41},{name:"Tomato",cal:18},
+  {name:"Cucumber",cal:15},{name:"Lettuce",cal:15},{name:"Bell pepper",cal:31},{name:"Onion",cal:40},
+  {name:"Mushrooms",cal:22},{name:"Zucchini",cal:17},{name:"Cauliflower",cal:25},{name:"Green beans",cal:31},
+  {name:"Cabbage",cal:25},{name:"Celery",cal:16},{name:"Asparagus",cal:20},{name:"Eggplant",cal:25},
+  {name:"Peas",cal:81},{name:"Kale",cal:49},{name:"Garlic",cal:149},{name:"Ginger",cal:80},
+  {name:"Milk (whole)",cal:61},{name:"Milk (skim)",cal:34},{name:"Milk (2%)",cal:50},
+  {name:"Greek yogurt (plain)",cal:97},{name:"Yogurt (plain)",cal:63},{name:"Cheddar cheese",cal:403},
+  {name:"Mozzarella",cal:280},{name:"Parmesan",cal:431},{name:"Cottage cheese",cal:98},
+  {name:"Cream cheese",cal:342},{name:"Butter",cal:717},{name:"Heavy cream",cal:340},
+  {name:"Almonds",cal:579},{name:"Peanuts",cal:567},{name:"Walnuts",cal:654},{name:"Cashews",cal:553},
+  {name:"Peanut butter",cal:588},{name:"Chia seeds",cal:486},{name:"Flax seeds",cal:534},
+  {name:"Sunflower seeds",cal:584},{name:"Olive oil",cal:884},{name:"Coconut oil",cal:862},
+  {name:"Honey",cal:304},{name:"Sugar",cal:387},{name:"Maple syrup",cal:260},
+  {name:"Dark chocolate",cal:546},{name:"Milk chocolate",cal:535},{name:"Ice cream",cal:207},
+  {name:"Chips (potato)",cal:536},{name:"Popcorn (air-popped)",cal:387},{name:"Granola",cal:471},
+  {name:"Lentils (cooked)",cal:116},{name:"Chickpeas (cooked)",cal:164},{name:"Black beans (cooked)",cal:132},
+  {name:"Kidney beans (cooked)",cal:127},{name:"Hummus",cal:166},{name:"Soy sauce",cal:53},
+  {name:"Ketchup",cal:112},{name:"Mayonnaise",cal:680},{name:"Mustard",cal:66},
+  {name:"Protein powder (whey)",cal:400},{name:"Protein bar",cal:350},
+];
+
 // ── State ──
 let currentDate = new Date();
+let selectedFood = null; // {name, calPer100}
+let searchTimeout = null;
 let settings = JSON.parse(localStorage.getItem('ct_settings') || '{"goal":2000,"units":"metric"}');
 
 function dateKey(d) {
@@ -566,7 +658,7 @@ function render() {
       <div class="entry">
         <div class="info">
           <div class="name">${esc(f.name)}</div>
-          <div class="detail">${f.weight ? f.weight + 'g' : ''}</div>
+          <div class="detail">${f.weight ? f.weight + 'g' : ''}${f.calPer100 ? ' (' + f.calPer100 + ' kcal/100g)' : ''}</div>
         </div>
         <div class="cals food">${Math.round(f.cals)}</div>
         <button class="delete-btn" onclick="deleteFood(${i})">&times;</button>
@@ -619,20 +711,153 @@ function esc(s) {
   return d.innerHTML;
 }
 
-// ── Food ──
+// ── Food Search ──
+const foodNameInput = document.getElementById('foodName');
+const searchResultsEl = document.getElementById('searchResults');
+const foodWeightInput = document.getElementById('foodWeight');
+const calPreviewEl = document.getElementById('calPreview');
+const previewCalsEl = document.getElementById('previewCals');
+const foodCalsPer100 = document.getElementById('foodCalsPer100');
+const manualCalGroup = document.getElementById('manualCalGroup');
+const foodCalsInput = document.getElementById('foodCals');
+
+foodNameInput.addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  selectedFood = null;
+  foodCalsPer100.value = '';
+  updateCalPreview();
+
+  if (q.length < 2) {
+    searchResultsEl.classList.remove('show');
+    return;
+  }
+
+  // Search local DB first
+  const localResults = FOOD_DB.filter(f => f.name.toLowerCase().includes(q)).slice(0, 5);
+  showSearchResults(localResults, q);
+});
+
+function showSearchResults(localResults, query) {
+  let html = '';
+
+  if (localResults.length > 0) {
+    html += localResults.map(f =>
+      `<div class="search-item" onclick="selectFood('${esc(f.name)}', ${f.cal})">
+        <span class="s-name">${esc(f.name)}</span>
+        <span class="s-cal">${f.cal} kcal/100g</span>
+      </div>`
+    ).join('');
+  }
+
+  html += `<div class="search-item" onclick="searchOnline('${esc(query)}')">
+    <span class="s-name" style="color:var(--accent)">Search online for "${esc(query)}"...</span>
+  </div>`;
+
+  searchResultsEl.innerHTML = html;
+  searchResultsEl.classList.add('show');
+}
+
+async function searchOnline(query) {
+  searchResultsEl.innerHTML = '<div class="search-loading">Searching...</div>';
+
+  try {
+    const resp = await fetch(
+      `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=8&fields=product_name,nutriments`
+    );
+    const data = await resp.json();
+
+    if (!data.products || data.products.length === 0) {
+      searchResultsEl.innerHTML = '<div class="search-loading">No results found. Enter calories manually below.</div>';
+      return;
+    }
+
+    const results = data.products
+      .filter(p => p.product_name && p.nutriments && p.nutriments['energy-kcal_100g'])
+      .slice(0, 8);
+
+    if (results.length === 0) {
+      searchResultsEl.innerHTML = '<div class="search-loading">No calorie data found. Enter manually below.</div>';
+      return;
+    }
+
+    searchResultsEl.innerHTML = results.map(p => {
+      const name = p.product_name.substring(0, 50);
+      const cal = Math.round(p.nutriments['energy-kcal_100g']);
+      return `<div class="search-item" onclick="selectFood('${esc(name)}', ${cal})">
+        <span class="s-name">${esc(name)}</span>
+        <span class="s-cal">${cal} kcal/100g</span>
+      </div>`;
+    }).join('');
+
+  } catch (e) {
+    searchResultsEl.innerHTML = '<div class="search-loading">Offline - enter calories manually below.</div>';
+  }
+}
+
+function selectFood(name, calPer100) {
+  selectedFood = { name, calPer100 };
+  foodNameInput.value = name;
+  foodCalsPer100.value = calPer100;
+  searchResultsEl.classList.remove('show');
+  manualCalGroup.style.display = 'none';
+  foodCalsInput.value = '';
+  updateCalPreview();
+  foodWeightInput.focus();
+}
+
+foodWeightInput.addEventListener('input', updateCalPreview);
+
+function updateCalPreview() {
+  const weight = parseFloat(foodWeightInput.value) || 0;
+  const per100 = parseFloat(foodCalsPer100.value) || 0;
+
+  if (per100 > 0 && weight > 0) {
+    const total = Math.round((per100 / 100) * weight);
+    previewCalsEl.textContent = total;
+    calPreviewEl.style.display = 'block';
+    manualCalGroup.style.display = 'none';
+  } else if (per100 > 0) {
+    calPreviewEl.style.display = 'none';
+    manualCalGroup.style.display = 'none';
+  } else {
+    calPreviewEl.style.display = 'none';
+    manualCalGroup.style.display = 'block';
+  }
+}
+
+// Close search when tapping outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.search-wrap')) {
+    searchResultsEl.classList.remove('show');
+  }
+});
+
+// ── Food Add/Delete ──
 function addFood() {
-  const name = document.getElementById('foodName').value.trim();
-  const weight = parseFloat(document.getElementById('foodWeight').value) || 0;
-  const cals = parseFloat(document.getElementById('foodCals').value) || 0;
+  const name = foodNameInput.value.trim();
+  const weight = parseFloat(foodWeightInput.value) || 0;
+  const per100 = parseFloat(foodCalsPer100.value) || 0;
+  let cals = 0;
+
+  if (per100 > 0 && weight > 0) {
+    cals = Math.round((per100 / 100) * weight);
+  } else {
+    cals = parseFloat(foodCalsInput.value) || 0;
+  }
+
   if (!name || !cals) return;
 
   const day = getDayData();
-  day.food.push({ name, weight, cals });
+  day.food.push({ name, weight, cals, calPer100: per100 || null });
   setDayData(null, day);
   closeModal('modalFood');
-  document.getElementById('foodName').value = '';
-  document.getElementById('foodWeight').value = '';
-  document.getElementById('foodCals').value = '';
+  foodNameInput.value = '';
+  foodWeightInput.value = '';
+  foodCalsInput.value = '';
+  foodCalsPer100.value = '';
+  selectedFood = null;
+  calPreviewEl.style.display = 'none';
+  manualCalGroup.style.display = 'block';
   render();
 }
 
